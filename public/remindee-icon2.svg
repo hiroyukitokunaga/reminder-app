@@ -1,0 +1,49 @@
+<svg width="512" height="512" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style=
+      "background-color: #f0f4f8; border-radius: 20%;">
+
+   <!-- 奥のカード（赤系） -->
+   <rect
+     x="16"
+     y="26"
+     width="60"
+     height="50"
+     rx="8"
+     ry="8"
+     fill="#EF5350"
+     transform="rotate(-12 50 50)"
+   />
+
+   <!-- 中間のカード（黄色系） -->
+   <rect
+     x="24"
+     y="24"
+     width="60"
+     height="50"
+     rx="8"
+ ry="8"
+     fill="#FFCA28"
+     transform="rotate(6 50 50)"
+   />
+
+   <!-- 手前のカード（青） -->
+   <rect
+     x="18"
+     y="22"
+     width="64"
+     height="56"
+     rx="8"
+     ry="8"
+     fill="#29B6F6"
+   />
+
+   <!-- チェックマーク -->
+   <path
+     d="M35 52 l10 10 l20 -20"
+     fill="none"
+     stroke="white"
+     stroke-width="9"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+   />
+
+ </svg>
