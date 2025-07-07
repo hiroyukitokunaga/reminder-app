@@ -90,7 +90,6 @@ export default function HomePage() {
   const [editingSituation, setEditingSituation] = useState<Situation | null>(null)
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default")
   const [activeNotifications, setActiveNotifications] = useState<Set<string>>(new Set())
-  const initialScrollDoneRef = useRef(false);
 
   const weatherIcons = {
     sunny: Sun,
@@ -156,6 +155,7 @@ export default function HomePage() {
   }, [])
 
   // Scroll to current situation ONLY on initial home view
+  const initialScrollDoneRef = useRef(false);
   useEffect(() => {
     if (currentView === 'home' && situations.length > 0 && !initialScrollDoneRef.current) {
       const now = new Date();
@@ -267,6 +267,7 @@ export default function HomePage() {
     const currentSituationId = pastOrCurrentSituations.length > 0 ? pastOrCurrentSituations[0].id : null;
 
     const isPast = new Date(situation.datetime).getTime() < now.getTime()
+    // console.log(`DEBUG: Situation: ${situation.title}, ID: ${situation.id}, isPast: ${isPast}, currentSituationId: ${currentSituationId}`);
     if (isPast && situation.id !== currentSituationId) {
       situation.todos.forEach((todo) => {
         if (!todo.completed) {
@@ -279,8 +280,10 @@ export default function HomePage() {
         })
       })
     }
+    // console.log(`DEBUG: unfinishedTodos after processing ${situation.title}:`, acc.map(item => item.todo.title));
     return acc
   }, [])
+  // console.log(`DEBUG: Final unfinishedTodos:`, unfinishedTodos.map(item => item.todo.title));
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -395,7 +398,7 @@ export default function HomePage() {
           <Button variant="ghost" size="sm" className="p-2" onClick={() => setCurrentView("home")}>
             <Home className="h-5 w-5" />
           </Button>
-          <Button variant="outline" size="sm" className="px-4 py-2 rounded-full" onClick={() => setCurrentView("new")}>
+          <Button variant="outline" size="sm" className="px-4 py-2 rounded-full" onClick={() => setCurrentView("new")} data-testid="add-situation-button">
             <Plus className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="sm" className="p-2" onClick={() => setCurrentView("settings")}>
@@ -421,8 +424,13 @@ function SettingsPage({
   const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false)
   const [isCalendarLoading, setIsCalendarLoading] = useState(false)
   const [tokenClient, setTokenClient] = useState<any>(null)
+  const [notificationPermission, setNotificationPermission] = useState("default")
 
   useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission)
+    }
+
     const gapiScript = document.createElement("script")
     gapiScript.src = "https://apis.google.com/js/api.js"
     gapiScript.async = true
@@ -513,12 +521,199 @@ function SettingsPage({
     }
   }
 
+  const handleExportCSV = () => {
+    const headers = ["situation_id", "situation_title", "situation_detail", "location", "datetime", "isPredicted", "todo_id", "todo_title", "todo_completed", "todo_backgroundColor", "todo_isPinned", "subtodo_id", "subtodo_title", "subtodo_completed", "subtodo_isPinned"];
+    const rows = situations.flatMap(s =>
+      s.todos.flatMap(t => {
+        if (t.subTodos.length === 0) {
+          return [{
+            ...s,
+            todo_id: t.id,
+            todo_title: t.title,
+            todo_completed: t.completed,
+            todo_backgroundColor: t.backgroundColor,
+            todo_isPinned: t.isPinned,
+            subtodo_id: "",
+            subtodo_title: "",
+            subtodo_completed: false,
+            subtodo_isPinned: false
+          }];
+        }
+        return t.subTodos.map(st => ({
+          ...s,
+          todo_id: t.id,
+          todo_title: t.title,
+          todo_completed: t.completed,
+          todo_backgroundColor: t.backgroundColor,
+          todo_isPinned: t.isPinned,
+          subtodo_id: st.id,
+          subtodo_title: st.title,
+          subtodo_completed: st.completed,
+          subtodo_isPinned: st.isPinned
+        }));
+      })
+    ).map(row => ({
+      situation_id: row.id,
+      situation_title: row.title,
+      situation_detail: row.detail,
+      location: row.location,
+      datetime: new Date(row.datetime).toISOString(),
+      isPredicted: row.isPredicted,
+      todo_id: row.todo_id,
+      todo_title: row.todo_title,
+      todo_completed: row.todo_completed,
+      todo_backgroundColor: row.todo_backgroundColor,
+      todo_isPinned: row.todo_isPinned,
+      subtodo_id: row.subtodo_id,
+      subtodo_title: row.subtodo_title,
+      subtodo_completed: row.subtodo_completed,
+      subtodo_isPinned: row.subtodo_isPinned
+    }));
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => headers.map(header => `"${row[header as keyof typeof row]}"`).join(','))
+    ].join('\n');
+
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+    const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "remindee_export.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result;
+      if (typeof text !== 'string') return;
+      try {
+        const lines = text.split('\n').filter(line => line);
+        const headers = lines[0].split(',').map(h => h.replace(/"/g, ''));
+        const data = lines.slice(1).map(line => {
+            const values = line.match(/(".*?"|[^,]+)/g) || [];
+            return headers.reduce((obj, header, index) => {
+                obj[header as keyof Situation] = values[index]?.replace(/"/g, '');
+                return obj;
+            }, {} as any);
+        });
+
+
+        const newSituations: Situation[] = [];
+        const situationsMap = new Map<string, Situation>();
+
+        for (const row of data) {
+            let situation = situationsMap.get(row.situation_id);
+            if (!situation) {
+                situation = {
+                    id: row.situation_id,
+                    title: row.situation_title,
+                    detail: row.situation_detail,
+                    location: row.location,
+                    weather: row.weather,
+                    datetime: new Date(row.datetime),
+                    isPredicted: row.isPredicted === 'true',
+                    todos: [],
+                };
+                situationsMap.set(row.situation_id, situation);
+                newSituations.push(situation);
+            }
+
+            let todo = situation.todos.find(t => t.id === row.todo_id);
+            if (!todo) {
+                todo = {
+                    id: row.todo_id,
+                    title: row.todo_title,
+                    completed: row.todo_completed === 'true',
+                    backgroundColor: row.todo_backgroundColor,
+                    isPinned: row.todo_isPinned === 'true',
+                    subTodos: [],
+                };
+                situation.todos.push(todo);
+            }
+
+            if (row.subtodo_id) {
+                todo.subTodos.push({
+                    id: row.subtodo_id,
+                    title: row.subtodo_title,
+                    completed: row.subtodo_completed === 'true',
+                    isPinned: row.subtodo_isPinned === 'true',
+                });
+            }
+        }
+        onImport(newSituations);
+        alert("データのインポートが完了しました。");
+      } catch (error) {
+        console.error("Failed to parse CSV", error);
+        alert("CSVファイルの解析に失敗しました。");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const requestNotificationPermission = () => {
+    if (!("Notification" in window)) {
+      alert("このブラウザは通知をサポートしていません。");
+      return;
+    }
+    Notification.requestPermission().then(permission => {
+      setNotificationPermission(permission);
+    });
+  };
+
+  const totalTodos = situations.reduce((acc, s) => acc + s.todos.reduce((tAcc, t) => tAcc + 1 + t.subTodos.length, 0), 0);
+
   return (
-    <div className="p-4">
+    <div className="p-4 pb-20">
       <h1 className="text-lg font-medium text-center mb-6">設定</h1>
-      <div className="space-y-4">
+      <div className="space-y-6">
+
+        {/* Data Export */}
+        <div className="border rounded-lg p-4">
+          <h3 className="text-base font-medium mb-2">データエクスポート</h3>
+          <p className="text-sm text-gray-600 mb-3">すべての場面データをCSVファイルとしてダウンロードします。</p>
+          <Button onClick={handleExportCSV} className="w-full" variant="outline">
+            <Download className="h-4 w-4 mr-2" />
+            CSVファイルをダウンロード
+          </Button>
+        </div>
+
+        {/* Data Import */}
+        <div className="border rounded-lg p-4">
+          <h3 className="text-base font-medium mb-2">データインポート</h3>
+          <p className="text-sm text-gray-600 mb-3">CSVファイルから場面データを読み込みます。既存のデータは置き換えられます。</p>
+          <Button onClick={handleImportClick} className="w-full" variant="outline">
+            <Upload className="h-4 w-4 mr-2" />
+            CSVファイルを選択
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+            accept=".csv"
+          />
+        </div>
+
+        {/* Google Calendar Sync */}
         <div className="border rounded-lg p-4">
             <h3 className="text-base font-medium mb-2">Googleカレンダー連携</h3>
+            <p className="text-sm text-gray-600 mb-3">場面データをGoogleカレンダーにエクスポートできます。</p>
             <div className="space-y-2">
               {!isGoogleSignedIn ? (
                 <div ref={googleSignInButtonRef} className="flex justify-center"></div>
@@ -538,7 +733,36 @@ function SettingsPage({
                 </>
               )}
             </div>
-          </div>
+        </div>
+
+        {/* Notification Settings */}
+        <div className="border rounded-lg p-4">
+            <h3 className="text-base font-medium mb-2">通知設定</h3>
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-sm">ブラウザ通知</p>
+                    <p className="text-xs text-gray-600">未来の場面の10分前にポップアップ通知を表示します。</p>
+                </div>
+                {notificationPermission === 'granted' ? (
+                    <span className="text-sm text-green-600">許可済み</span>
+                ) : (
+                    <Button onClick={requestNotificationPermission} size="sm" variant="outline">
+                        許可する
+                    </Button>
+                )}
+            </div>
+        </div>
+
+        {/* App Info */}
+        <div className="border rounded-lg p-4">
+            <h3 className="text-base font-medium mb-2">アプリ情報</h3>
+            <div className="space-y-1 text-sm text-gray-700">
+                <p>バージョン: 1.0.0</p>
+                <p>現在の場面数: {situations.length}件</p>
+                <p>総ToDo数: {totalTodos}件</p>
+            </div>
+        </div>
+
       </div>
       <div className="mt-8 pb-8">
         <Button onClick={onBack} variant="outline" className="w-full">戻る</Button>
@@ -636,6 +860,20 @@ function NewSituationPage({
     setShowSituationList(false)
   }
 
+  const formatDatetimeLocal = (date: Date) => {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  const handleDeletePastSituation = (id: string) => {
+    setPastSituations(prev => prev.filter(s => s.id !== id));
+    // Also remove from localStorage if needed, or handle on next save
+  };
+
   return (
     <div className="p-4">
       <h1 className="text-lg font-medium text-center mb-6">場面入力</h1>
@@ -649,6 +887,21 @@ function NewSituationPage({
         </div>
         <button onClick={() => setShowSituationList(true)} className="text-sm text-blue-600">リスト</button>
       </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">詳細</label>
+        <textarea value={detail} onChange={(e) => setDetail(e.target.value)} className="w-full p-2 border rounded-md" placeholder="詳細を入力 (任意)" rows={3}></textarea>
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">日時</label>
+        <input type="datetime-local" value={formatDatetimeLocal(datetime)} onChange={(e) => setDatetime(new Date(e.target.value))} className="w-full p-2 border rounded-md" />
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">場所</label>
+        <div className="flex items-center gap-2">
+          <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="flex-1 p-2 border rounded-md" placeholder="現在地" />
+          <Sun className="h-5 w-5 text-yellow-500" /> {/* Dummy weather icon */}
+        </div>
+      </div>
       <div className="mb-6">
         <label className="block text-sm font-medium mb-2">やること</label>
         <div className="space-y-2">
@@ -657,8 +910,8 @@ function NewSituationPage({
               <div className="flex items-center gap-2 p-2 rounded-md border" style={{ backgroundColor: todo.backgroundColor }}>
                 <input type="text" value={todo.title} onChange={(e) => updateTodo(todo.id, "title", e.target.value)} className="flex-1 bg-transparent outline-none" placeholder="やることを入力" />
                 <button onClick={() => setShowColorPicker(showColorPicker === todo.id ? null : todo.id)} className="w-6 h-6 rounded-full border" style={{ backgroundColor: todo.backgroundColor }} />
-                <button onClick={() => addSubTodo(todo.id)} className="p-1"><Plus className="h-4 w-4" /></button>
                 <button onClick={() => togglePin(todo.id)} className="p-1"><Pin className={cn("h-4 w-4", todo.isPinned && "fill-yellow-400")} /></button>
+                <button onClick={() => addSubTodo(todo.id)} className="p-1"><Plus className="h-4 w-4" /></button>
               </div>
               {showColorPicker === todo.id && (
                 <div className="flex gap-1 mt-1 p-2 bg-gray-50 rounded">
@@ -680,7 +933,12 @@ function NewSituationPage({
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-4 w-80 max-h-96 overflow-y-auto">
             <h3 className="text-lg font-medium mb-4">過去の場面</h3>
-            {pastSituations.map((s, i) => <button key={i} onClick={() => restoreFromPast(s)} className="block w-full text-left py-2 border-b">{s.title}</button>)}
+            {pastSituations.map((s, i) => (
+              <div key={i} className="flex justify-between items-center py-2 border-b">
+                <button onClick={() => restoreFromPast(s)} className="block w-full text-left text-sm text-gray-800 hover:text-blue-600 flex-1">{s.title}</button>
+                <button onClick={() => handleDeletePastSituation(s.id)} className="text-red-500 text-sm ml-2">削除</button>
+              </div>
+            ))}
             <Button onClick={() => setShowSituationList(false)} variant="outline" className="w-full mt-4">閉じる</Button>
           </div>
         </div>
@@ -747,8 +1005,17 @@ function EditSituationPage({
 
   const handleSave = () => {
     if (!title.trim()) return
-    onSave({ ...situation, title: title.trim(), detail: detail.trim(), location, datetime, todos })
+    onSave({ ...situation, title: title.trim(), detail: detail.trim(), location, weather: "sunny", datetime, todos })
   }
+
+  const formatDatetimeLocal = (date: Date) => {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
 
   return (
     <div className="p-4">
@@ -756,6 +1023,21 @@ function EditSituationPage({
       <div className="mb-4">
         <label className="block text-sm font-medium mb-2">場面</label>
         <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full p-2 border rounded-md" />
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">詳細</label>
+        <textarea value={detail} onChange={(e) => setDetail(e.target.value)} className="w-full p-2 border rounded-md" rows={3}></textarea>
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">日時</label>
+        <input type="datetime-local" value={formatDatetimeLocal(datetime)} onChange={(e) => setDatetime(new Date(e.target.value))} className="w-full p-2 border rounded-md" />
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-2">場所</label>
+        <div className="flex items-center gap-2">
+          <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="flex-1 p-2 border rounded-md" />
+          <Sun className="h-5 w-5 text-yellow-500" /> {/* Dummy weather icon */}
+        </div>
       </div>
       <div className="mb-6">
         <label className="block text-sm font-medium mb-2">やること</label>
@@ -765,8 +1047,8 @@ function EditSituationPage({
               <div className="flex items-center gap-2 p-2 rounded-md border" style={{ backgroundColor: todo.backgroundColor }}>
                 <input type="text" value={todo.title} onChange={(e) => updateTodo(todo.id, "title", e.target.value)} className="flex-1 bg-transparent outline-none" />
                 <button onClick={() => setShowColorPicker(showColorPicker === todo.id ? null : todo.id)} className="w-6 h-6 rounded-full border" style={{ backgroundColor: todo.backgroundColor }} />
-                <button onClick={() => addSubTodo(todo.id)} className="p-1"><Plus className="h-4 w-4" /></button>
                 <button onClick={() => togglePin(todo.id)} className="p-1"><Pin className={cn("h-4 w-4", todo.isPinned && "fill-yellow-400")} /></button>
+                <button onClick={() => addSubTodo(todo.id)} className="p-1"><Plus className="h-4 w-4" /></button>
               </div>
               {showColorPicker === todo.id && (
                 <div className="flex gap-1 mt-1 p-2 bg-gray-50 rounded">
