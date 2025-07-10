@@ -5,6 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch";
 import {
   Home,
   Plus,
@@ -90,6 +91,23 @@ export default function HomePage() {
   const [editingSituation, setEditingSituation] = useState<Situation | null>(null)
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default")
   const [activeNotifications, setActiveNotifications] = useState<Set<string>>(new Set())
+  const [showCompletedSituations, setShowCompletedSituations] = useState(true);
+
+  useEffect(() => {
+    const savedSettings = localStorage.getItem('remindee_settings');
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings);
+      if (settings.showCompletedSituations !== undefined) {
+        setShowCompletedSituations(settings.showCompletedSituations);
+      }
+    }
+  }, []);
+
+  const handleShowCompletedChange = (checked: boolean) => {
+    setShowCompletedSituations(checked);
+    const settings = { showCompletedSituations: checked };
+    localStorage.setItem('remindee_settings', JSON.stringify(settings));
+  };
 
   const weatherIcons = {
     sunny: Sun,
@@ -256,7 +274,13 @@ export default function HomePage() {
   }
 
   if (currentView === "settings") {
-    return <SettingsPage onBack={() => setCurrentView("home")} situations={situations} onImport={setSituations} />
+    return <SettingsPage 
+      onBack={() => setCurrentView("home")} 
+      situations={situations} 
+      onImport={setSituations} 
+      showCompletedSituations={showCompletedSituations}
+      onShowCompletedChange={handleShowCompletedChange}
+    />
   }
 
   const unfinishedTodos = situations.reduce<any[]>((acc, situation) => {
@@ -284,6 +308,10 @@ export default function HomePage() {
     return acc
   }, [])
   // console.log(`DEBUG: Final unfinishedTodos:`, unfinishedTodos.map(item => item.todo.title));
+
+  const filteredSituations = showCompletedSituations
+    ? situations
+    : situations.filter(s => !s.todos.every(t => t.completed && t.subTodos.every(st => st.completed)));
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -321,7 +349,7 @@ export default function HomePage() {
             className="space-y-4 max-h-96 overflow-y-auto" 
             id="situations-container"
           >
-            {situations.map((situation) => (
+            {filteredSituations.map((situation) => (
               <div
                 key={situation.id}
                 id={`situation-${situation.id}`}
@@ -414,10 +442,14 @@ function SettingsPage({
   onBack,
   situations,
   onImport,
+  showCompletedSituations,
+  onShowCompletedChange,
 }: {
   onBack: () => void
   situations: Situation[]
   onImport: (situations: Situation[]) => void
+  showCompletedSituations: boolean
+  onShowCompletedChange: (checked: boolean) => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const googleSignInButtonRef = useRef<HTMLDivElement>(null)
@@ -732,6 +764,20 @@ function SettingsPage({
                   </div>
                 </>
               )}
+            </div>
+        </div>
+
+        {/* Display Settings */}
+        <div className="border rounded-lg p-4">
+            <h3 className="text-base font-medium mb-2">表示設定</h3>
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-sm">完了済みの場面を表示</p>
+                </div>
+                <Switch
+                    checked={showCompletedSituations}
+                    onCheckedChange={onShowCompletedChange}
+                />
             </div>
         </div>
 
